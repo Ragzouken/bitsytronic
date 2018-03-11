@@ -4,6 +4,8 @@ import serial
 import pygame
 import itertools
 
+import json
+
 def grouper(iterable, n, fillvalue=None):
     "Collect data into fixed-length chunks or blocks"
     # grouper('ABCDEFG', 3, 'x') --> ABC DEF Gxx
@@ -18,6 +20,7 @@ def byte_grid_to_bools(grid):
 
 MIXER   = [0, 16, 4, 20, 8, 24, 12, 28, 32, 48, 36, 52, 40, 56, 44, 60]
 UNMIXER = [0, 8, 16, 24, 4, 12, 20, 28, 32, 40, 48, 56, 36, 44, 52, 60] 
+GRAPHICS = []
 
 def mix_grid(grid):
     next = [False] * 64
@@ -45,7 +48,7 @@ def send_grid(grid, pipe):
         pipe.write(chr(value))
 
 def run():
-    SCREEN = (480, 272)
+    SCREEN = (800, 600)
     FPS = 20
     EXIT = False
 
@@ -60,20 +63,33 @@ def run():
     frame = 0
     grids = [[False] * 64, [False] * 64]
 
+    def save():
+        with open('graphics.txt', 'w') as outfile:
+            json.dump([grids], outfile)
+
+    def load():
+        with open('graphics.txt', 'r') as infile:
+            return json.load(infile)
+
+    grids = load()[0]
+
     pipe = serial.Serial("COM3", timeout=0) 
     data = ""
 
     while True:
         if "\n" in pipe.read():
-            print("done")
             break
 
         clock.tick(FPS)
+
+    send_grid(grids[frame], pipe)
 
     while not EXIT:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 EXIT = True
+                save()
+                send_grid([False] * 64, pipe)
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
                     frame = 1 - frame
@@ -89,7 +105,7 @@ def run():
         for y in xrange(8):
             for x in xrange(8):
                 color = WHITE if grids[frame][y * 8 + x] else BLACK
-                pygame.draw.rect(screen, color, (x * 32 + 8, y * 32 + 8, 32, 32))
+                pygame.draw.rect(screen, color, (x * 64 + 8, y * 64 + 8, 64, 64))
 
         pygame.display.flip()
 
