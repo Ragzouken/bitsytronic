@@ -6,6 +6,7 @@ import itertools
 
 import argparse
 import json
+import colorsys
 
 class SerialMessager(object):
     def __init__(self):
@@ -21,19 +22,34 @@ class SerialMessager(object):
 
     def process(self):
         if self.data:
-            return COMMANDS[self.data[0]](self.data)
+            return COMMANDS[self.data[0]](self)
 
-def splitTake(buffer, count):
-    output = buffer[:count]
-    del buffer[:count]
-    return output
+    def peek(self, count):
+        return self.data[:count]
+
+    def has_bytes(self, count):
+        return len(self.data) >= count
+
+    def take_byte(self):
+        return self.take_bytes(1)[0]
+
+    def take_string(self, count):
+        return "".join(chr(c) for c in self.take_bytes(count))
+
+    def take_bytes(self, count):
+        data = self.data[:count]
+        del self.data[:count]
+        return data
+
+class Project(object):
+    def __init__(self):
+        self.graphics = []
 
 def recvDEBUG(buffer):
-    if len(buffer) > 1 and len(buffer) - 2 >= buffer[1]:
-        count = buffer[1]
-        del buffer[:2]
-        print("".join(chr(c) for c in buffer[:count]))
-        del buffer[:count]
+    if buffer.has_bytes(2) and buffer.has_bytes(buffer.data[1] + 2):
+        buffer.take_byte()
+        count = buffer.take_byte()
+        print(buffer.take_string(count))
         return True
 
     return False
@@ -41,47 +57,67 @@ def recvDEBUG(buffer):
 def recvSYNCGRID(buffer):
     global frame, grids
 
-    if len(buffer) < 9:
+    if not buffer.has_bytes(9):
         return False
 
-    grids[frame] = byte_grid_to_bools(buffer[1:])
-    grids[frame] = mix_grid(grids[frame])
+    buffer.take_byte()
 
-    del buffer[:9]
+    grids[frame] = byte_grid_to_bools(buffer.take_bytes(8))
+    grids[frame] = mix_grid(grids[frame])
 
     return True
 
 def recvBUTTONDOWN(buffer):
-    global frame, grids, MESSAGER
+    global frame, grids, KEYS
 
-    if len(buffer) < 2:
+    if not buffer.has_bytes(2):
         return False
 
-    print("button down: %s" % buffer[1])
+    buffer.take_byte()
+    button = buffer.take_byte()
 
-    if buffer[1] == 3:
+    print("button down: %s" % button)
+
+    KEYS[button] = 1
+
+    if button == 3:
         frame = 1 - frame
-        send_grid(grids[frame], MESSAGER.serial)
-
-    del buffer[:2]
+        send_grid(grids[frame], buffer.serial)
 
     return True
 
 def recvBUTTONUP(buffer):
-    if len(buffer) < 2:
+    global frame, grids, KEYS
+
+    if not buffer.has_bytes(2):
         return False
 
-    print("button up: %s" % buffer[1])
+    buffer.take_byte()
+    button = buffer.take_byte()
 
-    del buffer[:2]
+    KEYS[button] = 0
+
+    if button == 3:
+        send_grid(grids[frame], buffer.serial)
+
+    print("button up: %s" % button)
 
     return True
+
+def recvDIALCHANGE(buffer):
+    if not buffer.has_bytes(3):
+        return False
+
+    buffer.take_byte()
+    dial = buffer.take_byte()
+    DIALS[dial] = buffer.take_byte()
 
 COMMANDS = {
     0: recvDEBUG,
     1: recvSYNCGRID,
     2: recvBUTTONDOWN,
     3: recvBUTTONUP,
+    4: recvDIALCHANGE,
 }
 
 def grouper(iterable, n, fillvalue=None):
@@ -99,6 +135,8 @@ def byte_grid_to_bools(grid):
 MIXER   = [0, 16, 4, 20, 8, 24, 12, 28, 32, 48, 36, 52, 40, 56, 44, 60]
 UNMIXER = [0, 8, 16, 24, 4, 12, 20, 28, 32, 40, 48, 56, 36, 44, 52, 60] 
 GRAPHICS = []
+KEYS = {}
+DIALS = {0: 255}
 
 def mix_grid(grid):
     next = [False] * 64
@@ -137,7 +175,8 @@ def run():
     global frame, grids
     #SCREEN = (800, 600)
     SCREEN = (480, 272)
-    FPS = 20
+    FPS = 20 # 50ms per frame
+    FRAME = 0
     EXIT = False
 
     BLACK = (32, 32, 32)
@@ -187,21 +226,29 @@ def run():
                     EXIT = True
                     save()
                     send_grid([False] * 64, MESSAGER.serial)
-                if event.key == pygame.K_SPACE:
-                    frame = 1 - frame
-                    send_grid(grids[frame], MESSAGER.serial)
 
         MESSAGER.receive()
         MESSAGER.process()
 
+        if 3 in KEYS and KEYS[3] >= 8:
+            frame = (FRAME // 8) % 2
+            send_grid(grids[frame], MESSAGER.serial)
+
         for y in xrange(8):
             for x in xrange(8):
-                color = WHITE if grids[frame][y * 8 + x] else BLACK
+                r, g, b = colorsys.hsv_to_rgb(DIALS[0] / 255., .75, 1)
+                fore = (r * 255, g * 255, b * 255)
+                color = fore if grids[frame][y * 8 + x] else BLACK
                 pygame.draw.rect(screen, color, (x * 32 + 8, y * 32 + 8, 32, 32))
 
         pygame.display.flip()
 
         clock.tick(FPS)
+        FRAME += 1
+
+        for key in KEYS:
+            if KEYS[key] > 0:
+                KEYS[key] += 1
 
 if __name__ == "__main__":
     run()

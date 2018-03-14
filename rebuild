@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+(cd controller && ino build && ino upload)
