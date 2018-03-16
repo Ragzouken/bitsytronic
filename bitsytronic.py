@@ -14,7 +14,7 @@ class SerialMessager(object):
         self.data = []
 
     def connect(self, port):
-        self.serial = serial.Serial(port, timeout=0)
+        self.serial = serial.Serial(port, 115200, timeout=0)
         self.data = []
 
     def receive(self):
@@ -68,7 +68,7 @@ def recvSYNCGRID(buffer):
     return True
 
 def recvBUTTONDOWN(buffer):
-    global frame, grids, KEYS
+    global frame, grids, KEYS, HUE
 
     if not buffer.has_bytes(2):
         return False
@@ -83,6 +83,12 @@ def recvBUTTONDOWN(buffer):
     if button == 3:
         frame = 1 - frame
         send_grid(grids[frame], buffer.serial)
+    elif button == 7:
+        HUE = (HUE + 4) % 256
+        print(HUE)
+    elif button == 8:
+        HUE = (HUE + 256 - 4) % 256
+        print(HUE)
 
     return True
 
@@ -111,6 +117,8 @@ def recvDIALCHANGE(buffer):
     buffer.take_byte()
     dial = buffer.take_byte()
     DIALS[dial] = buffer.take_byte()
+
+    #print(DIALS[dial])
 
 COMMANDS = {
     0: recvDEBUG,
@@ -170,11 +178,12 @@ frame = 0
 grids = [[False] * 64, [False] * 64]
 
 MESSAGER = SerialMessager()
+HUE = 0
 
 def run():
     global frame, grids
-    #SCREEN = (800, 600)
-    SCREEN = (480, 272)
+    SCREEN = (800, 600)
+    #SCREEN = (480, 272)
     FPS = 20 # 50ms per frame
     FRAME = 0
     EXIT = False
@@ -183,8 +192,9 @@ def run():
     WHITE = (255, 255, 255)
 
     pygame.init()
+    pygame.mouse.set_visible(False)
     pygame.display.set_caption('bitsytronic')
-    screen = pygame.display.set_mode(SCREEN)
+    screen = pygame.display.set_mode(SCREEN, pygame.FULLSCREEN)
     clock = pygame.time.Clock()
 
     def save():
@@ -236,10 +246,10 @@ def run():
 
         for y in xrange(8):
             for x in xrange(8):
-                r, g, b = colorsys.hsv_to_rgb(DIALS[0] / 255., .75, 1)
+                r, g, b = colorsys.hsv_to_rgb(HUE / 255., .75, 1)
                 fore = (r * 255, g * 255, b * 255)
                 color = fore if grids[frame][y * 8 + x] else BLACK
-                pygame.draw.rect(screen, color, (x * 32 + 8, y * 32 + 8, 32, 32))
+                pygame.draw.rect(screen, color, (x * 64 + 8, y * 64 + 8, 64, 64))
 
         pygame.display.flip()
 

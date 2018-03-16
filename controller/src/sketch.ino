@@ -165,13 +165,17 @@ void byteToChunk(uint8_t data, int offset)
 }
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
 
   sendDEBUG("test mark");
 
   pinMode(13, INPUT);
-  pinMode(12, INPUT);
+  pinMode(12, INPUT); 
   pinMode( 8, INPUT);
+
+  pinMode(2, INPUT_PULLUP);
+  pinMode(3, INPUT_PULLUP);
+  pinMode(4, INPUT_PULLUP);
 
   // INT pin requires a pullup
   pinMode(INTPIN, INPUT);
@@ -224,18 +228,101 @@ bool executeBuffer()
     return false;
 }
 
-void loop() 
-{
-    delay(30); // 30ms delay is required, dont remove me!
+static uint8_t enc_prev_pos   = 0;
+static uint8_t enc_flags      = 0;
 
-    while (bufferSize < 16 
-        && Serial.available() > 0)
+void read_encoder()
+{
+    int8_t enc_action = 0; // 1 or -1 if moved, sign is direction
+    uint8_t enc_cur_pos = 0;
+    // read in the encoder state first
+    if (bit_is_clear(PIND, 3)) 
     {
-        buffer[bufferSize] = Serial.read();
-        bufferSize += 1;
+        enc_cur_pos |= (1 << 0);
     }
 
-    while (executeBuffer());
+    if (bit_is_clear(PIND, 2)) 
+    {
+        enc_cur_pos |= (1 << 1);
+    }
+
+    // if any rotation at all
+    if (enc_cur_pos != enc_prev_pos)
+    {
+        if (enc_prev_pos == 0x00)
+        {
+            // this is the first edge
+            if (enc_cur_pos == 0x01) 
+            {
+                enc_flags |= (1 << 0);
+            }
+            else if (enc_cur_pos == 0x02) 
+            {
+                enc_flags |= (1 << 1);
+            }
+        }
+
+        if (enc_cur_pos == 0x03)
+        {
+            // this is when the encoder is in the middle of a "step"
+            enc_flags |= (1 << 4);
+        }
+        else if (enc_cur_pos == 0x00)
+        {
+            // this is the final edge
+            if (enc_prev_pos == 0x02) 
+            {
+                enc_flags |= (1 << 2);
+            }
+            else if (enc_prev_pos == 0x01) 
+            {
+                enc_flags |= (1 << 3);
+            }
+
+            // check the first and last edge
+            // or maybe one edge is missing, if missing then require the middle state
+            // this will reject bounces and false movements
+            if (bit_is_set(enc_flags, 0) && (bit_is_set(enc_flags, 2) || bit_is_set(enc_flags, 4)))
+             {
+                enc_action = 1;
+            }
+            else if (bit_is_set(enc_flags, 2) && (bit_is_set(enc_flags, 0) || bit_is_set(enc_flags, 4))) 
+            {
+                enc_action = 1;
+            }
+            else if (bit_is_set(enc_flags, 1) && (bit_is_set(enc_flags, 3) || bit_is_set(enc_flags, 4))) 
+            {
+                enc_action = -1;
+            }
+            else if (bit_is_set(enc_flags, 3) && (bit_is_set(enc_flags, 1) || bit_is_set(enc_flags, 4))) 
+            {
+                enc_action = -1;
+            }
+
+            enc_flags = 0; // reset for next time
+        }
+    }
+
+    enc_prev_pos = enc_cur_pos;
+ 
+    if (enc_action > 0) 
+    {
+        sendBUTTONDOWN(7);
+    }
+    else if (enc_action < 0) 
+    {
+        sendBUTTONDOWN(8);
+    }
+}
+
+static uint32_t keypad_timer = 0;
+
+void read_keypad()
+{
+    uint32_t time = millis();
+
+    // can't do this more frequently than once per 30ms
+    if (keypad_timer - time < 30) return; 
 
     // If a button was just pressed or released...
     if (trellis.readSwitches()) 
@@ -257,6 +344,21 @@ void loop()
         trellis.writeDisplay();
         sendSYNCGRID();
     }
+}
+
+void loop() 
+{
+    read_keypad();
+    read_encoder();
+
+    while (bufferSize < 16 
+        && Serial.available() > 0)
+    {
+        buffer[bufferSize] = Serial.read();
+        bufferSize += 1;
+    }
+
+    while (executeBuffer());
 
     bool held1 = digitalRead(13);
 
@@ -328,11 +430,18 @@ void loop()
     int d1 = map(analogRead(A1), 0, 1023, 0, 255);
     int d2 = map(analogRead(A2), 0, 1023, 0, 255);
 
+    d0 = (dials[0] + d0) / 2;
+
     if (d0 != dials[0])
     {
         dials[0] = d0;
         sendDIALCHANGE(0, d0);
 
         //sendDEBUG(String(d0));
+    }
+
+    if (digitalRead(4) == LOW)
+    {
+        sendBUTTONDOWN(4);
     }
 }
