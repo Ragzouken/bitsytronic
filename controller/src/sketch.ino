@@ -211,6 +211,7 @@ void setup() {
 bool down1 = false;
 bool down2 = false;
 bool down3 = false;
+bool down4 = false;
 
 bool buffer2[numKeys];
 
@@ -231,9 +232,22 @@ bool executeBuffer()
 static uint8_t enc_prev_pos   = 0;
 static uint8_t enc_flags      = 0;
 
+static int8_t enc_change = 0;
+static uint32_t enc_timer = 0;
+
 void read_encoder()
 {
-    int8_t enc_action = 0; // 1 or -1 if moved, sign is direction
+    uint32_t time = millis();
+
+    bool update = time - enc_timer >= 100;
+
+    if (enc_change != 0 && update)
+    {
+        enc_timer = time;
+        sendDIALCHANGE(2, 128 + enc_change);
+        enc_change = 0;
+    }
+
     uint8_t enc_cur_pos = 0;
     // read in the encoder state first
     if (bit_is_clear(PIND, 3)) 
@@ -284,19 +298,19 @@ void read_encoder()
             // this will reject bounces and false movements
             if (bit_is_set(enc_flags, 0) && (bit_is_set(enc_flags, 2) || bit_is_set(enc_flags, 4)))
              {
-                enc_action = 1;
+                enc_change += 1;
             }
             else if (bit_is_set(enc_flags, 2) && (bit_is_set(enc_flags, 0) || bit_is_set(enc_flags, 4))) 
             {
-                enc_action = 1;
+                enc_change += 1;
             }
             else if (bit_is_set(enc_flags, 1) && (bit_is_set(enc_flags, 3) || bit_is_set(enc_flags, 4))) 
             {
-                enc_action = -1;
+                enc_change -= 1;
             }
             else if (bit_is_set(enc_flags, 3) && (bit_is_set(enc_flags, 1) || bit_is_set(enc_flags, 4))) 
             {
-                enc_action = -1;
+                enc_change -= 1;
             }
 
             enc_flags = 0; // reset for next time
@@ -304,15 +318,6 @@ void read_encoder()
     }
 
     enc_prev_pos = enc_cur_pos;
- 
-    if (enc_action > 0) 
-    {
-        sendBUTTONDOWN(7);
-    }
-    else if (enc_action < 0) 
-    {
-        sendBUTTONDOWN(8);
-    }
 }
 
 static uint32_t keypad_timer = 0;
@@ -322,7 +327,10 @@ void read_keypad()
     uint32_t time = millis();
 
     // can't do this more frequently than once per 30ms
-    if (keypad_timer - time < 30) return; 
+    if (time - keypad_timer < 30) return;
+    keypad_timer = time;
+
+    //sendDEBUG("read keys");
 
     // If a button was just pressed or released...
     if (trellis.readSwitches()) 
@@ -346,6 +354,17 @@ void read_keypad()
     }
 }
 
+void invert()
+{
+    for (uint8_t i=0; i<numKeys; i++) 
+    {
+        if (trellis.isLED(i))
+            trellis.clrLED(i);
+        else
+            trellis.setLED(i);
+    }
+}
+
 void loop() 
 {
     read_keypad();
@@ -366,13 +385,7 @@ void loop()
     {
         sendBUTTONDOWN(1);
 
-        for (uint8_t i=0; i<numKeys; i++) 
-        {
-            if (trellis.isLED(i))
-              trellis.clrLED(i);
-            else
-              trellis.setLED(i);
-        }
+        invert();
 
         trellis.writeDisplay();
         sendSYNCGRID();
@@ -389,22 +402,6 @@ void loop()
     if (held2 && !down2)
     {
         sendBUTTONDOWN(2);
-
-        for (uint8_t i=0; i<numKeys; i++) 
-        {
-          buffer2[i] = trellis.isLED(numKeys - i - 1);
-        }
-
-        for (uint8_t i=0; i<numKeys; i++) 
-        {
-            if (buffer2[i])
-              trellis.setLED(i);
-            else
-              trellis.clrLED(i);
-        }
-
-        trellis.writeDisplay();
-        sendSYNCGRID();
         down2 = true;
     }
     else if (!held2 && down2)
@@ -430,18 +427,16 @@ void loop()
     int d1 = map(analogRead(A1), 0, 1023, 0, 255);
     int d2 = map(analogRead(A2), 0, 1023, 0, 255);
 
-    d0 = (dials[0] + d0) / 2;
+    bool held4 = digitalRead(4) == LOW;
 
-    if (d0 != dials[0])
-    {
-        dials[0] = d0;
-        sendDIALCHANGE(0, d0);
-
-        //sendDEBUG(String(d0));
-    }
-
-    if (digitalRead(4) == LOW)
+    if (held4 && !down4)
     {
         sendBUTTONDOWN(4);
+        down4 = true;
+    }
+    else if (!held4 && down4)
+    {
+        down4 = false;
+        sendBUTTONUP(4);
     }
 }

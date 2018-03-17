@@ -68,7 +68,7 @@ def recvSYNCGRID(buffer):
     return True
 
 def recvBUTTONDOWN(buffer):
-    global frame, grids, KEYS, HUE
+    global frame, grids, KEYS, SEL
 
     if not buffer.has_bytes(2):
         return False
@@ -80,15 +80,14 @@ def recvBUTTONDOWN(buffer):
 
     KEYS[button] = 1
 
-    if button == 3:
+    if button == 2:
+        flip(grids[frame])
+        send_grid(grids[frame], buffer.serial)
+    elif button == 3:
         frame = 1 - frame
         send_grid(grids[frame], buffer.serial)
-    elif button == 7:
-        HUE = (HUE + 4) % 256
-        print(HUE)
-    elif button == 8:
-        HUE = (HUE + 256 - 4) % 256
-        print(HUE)
+    elif button == 4:
+        SEL = (SEL + 1) % 3 
 
     return True
 
@@ -127,6 +126,13 @@ COMMANDS = {
     3: recvBUTTONUP,
     4: recvDIALCHANGE,
 }
+
+def flip(grid):
+    copy = grid[:]
+
+    for y in xrange(8):
+        for x in xrange(8):
+            grid[y * 8 + x] = copy[y * 8 + 7 - x]
 
 def grouper(iterable, n, fillvalue=None):
     "Collect data into fixed-length chunks or blocks"
@@ -179,9 +185,11 @@ grids = [[False] * 64, [False] * 64]
 
 MESSAGER = SerialMessager()
 HUE = 0
+SEL = 0
+HSV = [0, 255, 255]
 
 def run():
-    global frame, grids
+    global frame, grids, HUE
     SCREEN = (800, 600)
     #SCREEN = (480, 272)
     FPS = 20 # 50ms per frame
@@ -240,16 +248,29 @@ def run():
         MESSAGER.receive()
         MESSAGER.process()
 
+        if 2 in DIALS and DIALS[2] != 128:
+            change = DIALS[2] - 128
+            
+            if SEL == 0:
+                HSV[SEL] = (HSV[SEL] + change * 4) % 256
+            else:
+                HSV[SEL] = min(max(0, HSV[SEL] + change * 4), 255)
+
+            print(HSV)
+            DIALS[2] = 128
+
         if 3 in KEYS and KEYS[3] >= 8:
             frame = (FRAME // 8) % 2
             send_grid(grids[frame], MESSAGER.serial)
 
+        screen.fill((96, 96, 96))
+
         for y in xrange(8):
             for x in xrange(8):
-                r, g, b = colorsys.hsv_to_rgb(HUE / 255., .75, 1)
+                r, g, b = colorsys.hsv_to_rgb(HSV[0] / 255., HSV[1] / 255., HSV[2] / 255.)
                 fore = (r * 255, g * 255, b * 255)
                 color = fore if grids[frame][y * 8 + x] else BLACK
-                pygame.draw.rect(screen, color, (x * 64 + 8, y * 64 + 8, 64, 64))
+                pygame.draw.rect(screen, color, (x * 64 + 144, y * 64 + 44, 64, 64))
 
         pygame.display.flip()
 
