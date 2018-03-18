@@ -259,17 +259,22 @@ def run():
             print(HSV)
             DIALS[2] = 128
 
+        r, g, b = colorsys.hsv_to_rgb(HSV[0] / 255., HSV[1] / 255., HSV[2] / 255.)
+        fore = (r * 255, g * 255, b * 255)
+        dim = (r * 128, g * 128, b * 128)
+
         if 3 in KEYS and KEYS[3] >= 8:
             frame = (FRAME // 8) % 2
             send_grid(grids[frame], MESSAGER.serial)
+            
+        if 3 in KEYS and KEYS[3] > 0:
+            dim = BLACK
 
         screen.fill((96, 96, 96))
 
         for y in xrange(8):
             for x in xrange(8):
-                r, g, b = colorsys.hsv_to_rgb(HSV[0] / 255., HSV[1] / 255., HSV[2] / 255.)
-                fore = (r * 255, g * 255, b * 255)
-                color = fore if grids[frame][y * 8 + x] else BLACK
+                color = fore if grids[frame][y * 8 + x] else (dim if grids[1 - frame][y * 8 + x] else BLACK)
                 pygame.draw.rect(screen, color, (x * 64 + 144, y * 64 + 44, 64, 64))
 
         pygame.display.flip()

@@ -169,9 +169,10 @@ void setup() {
 
   sendDEBUG("test mark");
 
-  pinMode(13, INPUT);
-  pinMode(12, INPUT); 
-  pinMode( 8, INPUT);
+  pinMode(10, INPUT_PULLUP);
+  pinMode(11, INPUT_PULLUP); 
+  pinMode(12, INPUT_PULLUP);
+  pinMode(13, INPUT_PULLUP);
 
   pinMode(2, INPUT_PULLUP);
   pinMode(3, INPUT_PULLUP);
@@ -212,8 +213,7 @@ bool down1 = false;
 bool down2 = false;
 bool down3 = false;
 bool down4 = false;
-
-bool buffer2[numKeys];
+bool down5 = false;
 
 int dials[3];
 
@@ -365,6 +365,26 @@ void invert()
     }
 }
 
+bool checkButton(uint8_t pin, bool &down, uint8_t id)
+{
+    bool held = digitalRead(pin) == LOW;
+
+    if (held && !down)
+    {
+        down = true;
+        sendBUTTONDOWN(id);
+        return true;
+    }
+    else if (!held && down)
+    {
+        down = false;
+        sendBUTTONUP(id);
+        return true;
+    }
+
+    return false;
+}
+
 void loop() 
 {
     read_keypad();
@@ -379,64 +399,15 @@ void loop()
 
     while (executeBuffer());
 
-    bool held1 = digitalRead(13);
-
-    if (held1 && !down1)
+    if (checkButton(13, down1, 1) && down1)
     {
-        sendBUTTONDOWN(1);
-
         invert();
-
         trellis.writeDisplay();
         sendSYNCGRID();
-        down1 = true;
-    }
-    else if (!held1 && down1)
-    {
-        down1 = false;
-        sendBUTTONUP(1);
     }
 
-    bool held2 = digitalRead(12);
-
-    if (held2 && !down2)
-    {
-        sendBUTTONDOWN(2);
-        down2 = true;
-    }
-    else if (!held2 && down2)
-    {
-        down2 = false;
-        sendBUTTONUP(2);
-    }
-
-    bool held3 = digitalRead(8);
-
-    if (held3 && !down3)
-    {
-        sendBUTTONDOWN(3);
-        down3 = true;
-    }
-    else if (!held3 && down3)
-    {
-        down3 = false;
-        sendBUTTONUP(3);
-    }
-
-    int d0 = map(analogRead(A0), 0, 1023, 0, 255);
-    int d1 = map(analogRead(A1), 0, 1023, 0, 255);
-    int d2 = map(analogRead(A2), 0, 1023, 0, 255);
-
-    bool held4 = digitalRead(4) == LOW;
-
-    if (held4 && !down4)
-    {
-        sendBUTTONDOWN(4);
-        down4 = true;
-    }
-    else if (!held4 && down4)
-    {
-        down4 = false;
-        sendBUTTONUP(4);
-    }
+    checkButton(12, down2, 2);
+    checkButton(11, down3, 3);
+    checkButton(10, down5, 5);
+    checkButton( 4, down4, 4);
 }
