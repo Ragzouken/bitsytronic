@@ -67,6 +67,51 @@ def recvSYNCGRID(buffer):
 
     return True
 
+def recv_PAD_DOWN(buffer):
+    global KEYS, grids
+
+    if not buffer.has_bytes(2):
+        return False
+
+    buffer.take_byte()
+    button = buffer.take_byte()
+
+    print("pad down: %s" % button)
+
+    KEYS[256 + button] = 1
+
+    print(len(GRAPHICS))
+    grids = GRAPHICS[button]
+    send_grid(grids[frame], MESSAGER.serial)
+
+    return True
+
+def recv_PAD_UP(buffer):
+    global KEYS
+
+    if not buffer.has_bytes(2):
+        return False
+
+    buffer.take_byte()
+    button = buffer.take_byte()
+
+    print("pad up: %s" % button)
+
+    KEYS[256 + button] = 0
+
+    return True
+
+def SET_PAD_TOGGLE(toggle):
+    global PAD_TOGGLE
+    PAD_TOGGLE = toggle
+
+    print("SET PAD TOGGLE TO %s" % PAD_TOGGLE)
+
+    if PAD_TOGGLE:
+        MESSAGER.serial.write(chr(6))
+    else:
+        MESSAGER.serial.write(chr(5))
+
 def recvBUTTONDOWN(buffer):
     global frame, grids, KEYS, SEL
 
@@ -88,6 +133,9 @@ def recvBUTTONDOWN(buffer):
         send_grid(grids[frame], buffer.serial)
     elif button == 4:
         SEL = (SEL + 1) % 3 
+    elif button == 5:
+        SET_PAD_TOGGLE(not PAD_TOGGLE)
+        save()
 
     return True
 
@@ -125,6 +173,9 @@ COMMANDS = {
     2: recvBUTTONDOWN,
     3: recvBUTTONUP,
     4: recvDIALCHANGE,
+    # pad toggle
+    7: recv_PAD_DOWN,
+    8: recv_PAD_UP,
 }
 
 def flip(grid):
@@ -187,9 +238,19 @@ MESSAGER = SerialMessager()
 HUE = 0
 SEL = 0
 HSV = [0, 255, 255]
+PAD_TOGGLE = True
+
+
+def save():
+    with open('graphics.txt', 'w') as outfile:
+        json.dump(GRAPHICS, outfile)
+
+def load():
+    with open('graphics.txt', 'r') as infile:
+        return json.load(infile)
 
 def run():
-    global frame, grids, HUE
+    global frame, grids, HUE, GRAPHICS
     SCREEN = (800, 600)
     #SCREEN = (480, 272)
     FPS = 20 # 50ms per frame
@@ -205,16 +266,14 @@ def run():
     screen = pygame.display.set_mode(SCREEN, pygame.FULLSCREEN)
     clock = pygame.time.Clock()
 
-    def save():
-        with open('graphics.txt', 'w') as outfile:
-            json.dump([grids], outfile)
-
-    def load():
-        with open('graphics.txt', 'r') as infile:
-            return json.load(infile)
-
     try:
-        grids = load()[0]
+        GRAPHICS = load()
+        grids = GRAPHICS[0]
+
+        while len(GRAPHICS) < 64:
+            GRAPHICS.append([[False] * 64, [False] * 64])
+
+        print(len(GRAPHICS))
     except (IOError, ValueError):
         pass
 
@@ -245,6 +304,7 @@ def run():
                     save()
                     send_grid([False] * 64, MESSAGER.serial)
 
+
         MESSAGER.receive()
         MESSAGER.process()
 
@@ -263,11 +323,13 @@ def run():
         fore = (r * 255, g * 255, b * 255)
         dim = (r * 128, g * 128, b * 128)
 
-        if 3 in KEYS and KEYS[3] >= 8:
+        animate = (not PAD_TOGGLE) or (3 in KEYS and KEYS[3] > 8)
+
+        if animate:
             frame = (FRAME // 8) % 2
             send_grid(grids[frame], MESSAGER.serial)
             
-        if 3 in KEYS and KEYS[3] > 0:
+        if animate or (3 in KEYS and KEYS[3] > 0):
             dim = BLACK
 
         screen.fill((96, 96, 96))

@@ -57,6 +57,8 @@ Adafruit_TrellisSet trellis =  Adafruit_TrellisSet(&matrix0, &matrix1, &matrix2,
 uint8_t buffer[16];
 uint8_t bufferSize = 0;
 
+bool GRIDDATA[64];
+
 struct Command
 {
     typedef enum : uint8_t
@@ -66,6 +68,10 @@ struct Command
         BUTTONDOWN,
         BUTTONUP,
         DIALCHANGE,
+        SET_PAD_TOGGLE,
+        SET_PAD_HIGHLIGHT,
+        PAD_DOWN,
+        PAD_UP,
     } Type;
 };
 
@@ -145,7 +151,7 @@ char chunkToByte(uint8_t offset)
   for (int i = 0; i < 8; ++i)
   {
     data <<= 1;
-    data |= trellis.isLED(offset + i);
+    data |= GRIDDATA[offset + i];
   }
 
   return data;
@@ -156,10 +162,9 @@ void byteToChunk(uint8_t data, int offset)
   for (int i = 0; i < 8; ++i)
   {
     bool value = data & 0x1;
-    
-    if (value) trellis.setLED(offset + i);
-    else       trellis.clrLED(offset + i);
-    
+
+    trellisSet(offset + i, value);
+
     data >>= 1;
   }
 }
@@ -215,6 +220,8 @@ bool down3 = false;
 bool down4 = false;
 bool down5 = false;
 
+bool padModeToggle = true;
+
 int dials[3];
 
 bool executeBuffer()
@@ -224,6 +231,18 @@ bool executeBuffer()
     if (buffer[0] == Command::SYNCGRID)
     {
         return recvSYNCGRID();
+    }
+    else if (buffer[0] == Command::SET_PAD_HIGHLIGHT)
+    {
+        padModeToggle = true;
+        bufferDiscard(1);
+        return true;
+    }
+    else if (buffer[0] == Command::SET_PAD_TOGGLE)
+    {
+        padModeToggle = false;
+        bufferDiscard(1);
+        return true;
     }
 
     return false;
@@ -322,6 +341,20 @@ void read_encoder()
 
 static uint32_t keypad_timer = 0;
 
+void trellisSetTemp(uint8_t i, bool on)
+{
+    if (on) trellis.setLED(i);
+    else    trellis.clrLED(i);
+}
+
+void trellisSet(uint8_t i, bool on)
+{
+    if (on) trellis.setLED(i);
+    else    trellis.clrLED(i);
+
+    GRIDDATA[i] = on;
+}
+
 void read_keypad()
 {
     uint32_t time = millis();
@@ -332,36 +365,40 @@ void read_keypad()
 
     //sendDEBUG("read keys");
 
-    // If a button was just pressed or released...
     if (trellis.readSwitches()) 
     {
-        // go through every button
-        for (uint8_t i=0; i<numKeys; i++) 
-        {
-          // if it was pressed...
-          if (trellis.justPressed(i)) 
-          {
-            // Alternate the LED
-            if (trellis.isLED(i))
-              trellis.clrLED(i);
+        for (uint8_t i = 0; i < numKeys; ++i) 
+        { 
+            if (padModeToggle)
+            {
+                if (trellis.justPressed(i))
+                {
+                    trellisSet(i, !GRIDDATA[i]);
+                }
+            }
             else
-              trellis.setLED(i);
-          } 
-        }
-        // tell the trellis to set the LEDs we requested
-        trellis.writeDisplay();
-        sendSYNCGRID();
-    }
-}
+            {
+                bool pressed = trellis.justPressed(i);
+                bool released = trellis.justReleased(i);
 
-void invert()
-{
-    for (uint8_t i=0; i<numKeys; i++) 
-    {
-        if (trellis.isLED(i))
-            trellis.clrLED(i);
-        else
-            trellis.setLED(i);
+                if (pressed)
+                {
+                    trellisSetTemp(i, !GRIDDATA[i]);
+                    Serial.write(Command::PAD_DOWN);
+                    Serial.write(i);
+                }
+
+                if (released)
+                {
+                    trellisSetTemp(i, GRIDDATA[i]);
+                    Serial.write(Command::PAD_UP);
+                    Serial.write(i);
+                }
+            }
+        }
+
+        if (padModeToggle) sendSYNCGRID();
+        trellis.writeDisplay();
     }
 }
 
@@ -399,13 +436,7 @@ void loop()
 
     while (executeBuffer());
 
-    if (checkButton(13, down1, 1) && down1)
-    {
-        invert();
-        trellis.writeDisplay();
-        sendSYNCGRID();
-    }
-
+    checkButton(13, down1, 1);
     checkButton(12, down2, 2);
     checkButton(11, down3, 3);
     checkButton(10, down5, 5);
