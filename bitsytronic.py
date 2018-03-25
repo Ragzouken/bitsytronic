@@ -82,7 +82,7 @@ def recv_PAD_DOWN(buffer):
 
     print(len(GRAPHICS))
     grids = GRAPHICS[button]
-    send_grid(grids[frame], MESSAGER.serial)
+    send_grid([i == button for i in xrange(64)], MESSAGER.serial)
 
     return True
 
@@ -109,8 +109,11 @@ def SET_PAD_TOGGLE(toggle):
 
     if PAD_TOGGLE:
         MESSAGER.serial.write(chr(6))
+        send_grid(grids[frame], MESSAGER.serial)
     else:
         MESSAGER.serial.write(chr(5))
+        button = GRAPHICS.index(grids)
+        send_grid([i == button for i in xrange(64)], MESSAGER.serial)
 
 def recvBUTTONDOWN(buffer):
     global frame, grids, KEYS, SEL
@@ -127,10 +130,12 @@ def recvBUTTONDOWN(buffer):
 
     if button == 2:
         flip(grids[frame])
-        send_grid(grids[frame], buffer.serial)
+        if PAD_TOGGLE:
+            send_grid(grids[frame], buffer.serial)
     elif button == 3:
         frame = 1 - frame
-        send_grid(grids[frame], buffer.serial)
+        if PAD_TOGGLE:
+            send_grid(grids[frame], buffer.serial)
     elif button == 4:
         SEL = (SEL + 1) % 3 
     elif button == 5:
@@ -151,7 +156,8 @@ def recvBUTTONUP(buffer):
     KEYS[button] = 0
 
     if button == 3:
-        send_grid(grids[frame], buffer.serial)
+        if PAD_TOGGLE:
+            send_grid(grids[frame], buffer.serial)
 
     print("button up: %s" % button)
 
@@ -327,7 +333,9 @@ def run():
 
         if animate:
             frame = (FRAME // 8) % 2
-            send_grid(grids[frame], MESSAGER.serial)
+
+            if PAD_TOGGLE:
+                send_grid(grids[frame], MESSAGER.serial)
             
         if animate or (3 in KEYS and KEYS[3] > 0):
             dim = BLACK
