@@ -1,30 +1,5 @@
-/*************************************************** 
-  This is a test example for the Adafruit Trellis w/HT16K33
-
-  Designed specifically to work with the Adafruit Trellis 
-  ----> https://www.adafruit.com/products/1616
-  ----> https://www.adafruit.com/products/1611
-
-  These displays use I2C to communicate, 2 pins are required to  
-  interface
-  Adafruit invests time and resources providing this open source code, 
-  please support Adafruit and open-source hardware by purchasing 
-  products from Adafruit!
-
-  Written by Limor Fried/Ladyada for Adafruit Industries.  
-  MIT license, all text above must be included in any redistribution
- ****************************************************/
-
 #include <Wire.h>
 #include "Adafruit_Trellis.h"
-
-/*************************************************** 
-  This example shows reading buttons and setting/clearing buttons in a loop
-  "momentary" mode has the LED light up only when a button is pressed
-  "latching" mode lets you turn the LED on/off when pressed
-
-  Up to 8 matrices can be used but this example will show 4 or 1
- ****************************************************/
 
 Adafruit_Trellis matrix0 = Adafruit_Trellis();
 Adafruit_Trellis matrix1 = Adafruit_Trellis();
@@ -57,6 +32,8 @@ Adafruit_TrellisSet trellis =  Adafruit_TrellisSet(&matrix0, &matrix1, &matrix2,
 uint8_t buffer[16];
 uint8_t bufferSize = 0;
 
+bool GRIDDATA[64];
+
 struct Command
 {
     typedef enum : uint8_t
@@ -66,6 +43,10 @@ struct Command
         BUTTONDOWN,
         BUTTONUP,
         DIALCHANGE,
+        SET_PAD_TOGGLE,
+        SET_PAD_HIGHLIGHT,
+        PAD_DOWN,
+        PAD_UP,
     } Type;
 };
 
@@ -145,7 +126,7 @@ char chunkToByte(uint8_t offset)
   for (int i = 0; i < 8; ++i)
   {
     data <<= 1;
-    data |= trellis.isLED(offset + i);
+    data |= GRIDDATA[offset + i];
   }
 
   return data;
@@ -156,22 +137,21 @@ void byteToChunk(uint8_t data, int offset)
   for (int i = 0; i < 8; ++i)
   {
     bool value = data & 0x1;
-    
-    if (value) trellis.setLED(offset + i);
-    else       trellis.clrLED(offset + i);
-    
+
+    trellisSet(offset + i, value);
+
     data >>= 1;
   }
 }
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
 
   sendDEBUG("test mark");
 
-  pinMode(13, INPUT);
-  pinMode(12, INPUT);
-  pinMode( 8, INPUT);
+  pinMode(2, INPUT_PULLUP);
+  pinMode(3, INPUT_PULLUP);
+  pinMode(4, INPUT_PULLUP);
 
   // INT pin requires a pullup
   pinMode(INTPIN, INPUT);
@@ -204,13 +184,7 @@ void setup() {
   trellis.writeDisplay();
 }
 
-bool down1 = false;
-bool down2 = false;
-bool down3 = false;
-
-bool buffer2[numKeys];
-
-int dials[3];
+bool padModeToggle = true;
 
 bool executeBuffer()
 {
@@ -220,13 +194,280 @@ bool executeBuffer()
     {
         return recvSYNCGRID();
     }
+    else if (buffer[0] == Command::SET_PAD_HIGHLIGHT)
+    {
+        padModeToggle = true;
+        bufferDiscard(1);
+        return true;
+    }
+    else if (buffer[0] == Command::SET_PAD_TOGGLE)
+    {
+        padModeToggle = false;
+        bufferDiscard(1);
+        return true;
+    }
+
+    return false;
+}
+
+static uint8_t enc_prev_pos   = 0;
+static uint8_t enc_flags      = 0;
+
+static int8_t enc_change = 0;
+static uint32_t enc_timer = 0;
+
+void read_encoder()
+{
+    uint32_t time = millis();
+
+    bool update = time - enc_timer >= 100;
+
+    if (enc_change != 0 && update)
+    {
+        enc_timer = time;
+        sendDIALCHANGE(2, 128 + enc_change);
+        enc_change = 0;
+    }
+
+    uint8_t enc_cur_pos = 0;
+    // read in the encoder state first
+    if (bit_is_clear(PIND, 3)) 
+    {
+        enc_cur_pos |= (1 << 0);
+    }
+
+    if (bit_is_clear(PIND, 2)) 
+    {
+        enc_cur_pos |= (1 << 1);
+    }
+
+    // if any rotation at all
+    if (enc_cur_pos != enc_prev_pos)
+    {
+        if (enc_prev_pos == 0x00)
+        {
+            // this is the first edge
+            if (enc_cur_pos == 0x01) 
+            {
+                enc_flags |= (1 << 0);
+            }
+            else if (enc_cur_pos == 0x02) 
+            {
+                enc_flags |= (1 << 1);
+            }
+        }
+
+        if (enc_cur_pos == 0x03)
+        {
+            // this is when the encoder is in the middle of a "step"
+            enc_flags |= (1 << 4);
+        }
+        else if (enc_cur_pos == 0x00)
+        {
+            // this is the final edge
+            if (enc_prev_pos == 0x02) 
+            {
+                enc_flags |= (1 << 2);
+            }
+            else if (enc_prev_pos == 0x01) 
+            {
+                enc_flags |= (1 << 3);
+            }
+
+            // check the first and last edge
+            // or maybe one edge is missing, if missing then require the middle state
+            // this will reject bounces and false movements
+            if (bit_is_set(enc_flags, 0) && (bit_is_set(enc_flags, 2) || bit_is_set(enc_flags, 4)))
+             {
+                enc_change += 1;
+            }
+            else if (bit_is_set(enc_flags, 2) && (bit_is_set(enc_flags, 0) || bit_is_set(enc_flags, 4))) 
+            {
+                enc_change += 1;
+            }
+            else if (bit_is_set(enc_flags, 1) && (bit_is_set(enc_flags, 3) || bit_is_set(enc_flags, 4))) 
+            {
+                enc_change -= 1;
+            }
+            else if (bit_is_set(enc_flags, 3) && (bit_is_set(enc_flags, 1) || bit_is_set(enc_flags, 4))) 
+            {
+                enc_change -= 1;
+            }
+
+            enc_flags = 0; // reset for next time
+        }
+    }
+
+    enc_prev_pos = enc_cur_pos;
+}
+
+static uint32_t keypad_timer = 0;
+
+void trellisSetTemp(uint8_t i, bool on)
+{
+    if (on) trellis.setLED(i);
+    else    trellis.clrLED(i);
+}
+
+void trellisSet(uint8_t i, bool on)
+{
+    if (on) trellis.setLED(i);
+    else    trellis.clrLED(i);
+
+    GRIDDATA[i] = on;
+}
+
+void read_keypad()
+{
+    uint32_t time = millis();
+
+    // can't do this more frequently than once per 30ms
+    if (time - keypad_timer < 30) return;
+    keypad_timer = time;
+
+    //sendDEBUG("read keys");
+
+    if (trellis.readSwitches()) 
+    {
+        for (uint8_t i = 0; i < numKeys; ++i) 
+        { 
+            if (padModeToggle)
+            {
+                if (trellis.justPressed(i))
+                {
+                    trellisSet(i, !GRIDDATA[i]);
+                }
+            }
+            else
+            {
+                bool pressed = trellis.justPressed(i);
+                bool released = trellis.justReleased(i);
+
+                if (pressed)
+                {
+                    trellisSetTemp(i, !GRIDDATA[i]);
+                    Serial.write(Command::PAD_DOWN);
+                    Serial.write(i);
+                }
+
+                if (released)
+                {
+                    trellisSetTemp(i, GRIDDATA[i]);
+                    Serial.write(Command::PAD_UP);
+                    Serial.write(i);
+                }
+            }
+        }
+
+        if (padModeToggle) sendSYNCGRID();
+        trellis.writeDisplay();
+    }
+}
+
+static int keys[] = {0, 708, 718, 760, 773, 822, 837, 877, 894, 912, 930, 1000};
+static int lastFrame;
+
+static uint8_t panel_next = 0;
+static uint8_t panel_prev = 0;
+
+int getPanelDown()
+{
+    int test = analogRead(A0);
+    uint8_t result = 0;
+
+    for (int i = 0; i < 11; ++i)
+    {
+        int l = keys[i];
+        int r = keys[i + 1];
+         
+        if (test >= l && test <= r)
+        {
+            int dl = test - l;
+            int dr = r - test;
+
+            if (dl <= 7 && dl < dr)
+            {
+                result = i;
+            }
+            else if (dr <= 7)
+            {
+                result = i + 1;
+            }
+        }
+    }
+
+    bool same = result == lastFrame;
+    lastFrame = result;
+
+    panel_next = result;
+    return same;
+}
+
+void readPanel()
+{
+    if (getPanelDown())
+    {
+        if (panel_prev != panel_next)
+        {
+            if (panel_prev > 0) 
+            {
+                sendBUTTONUP(panel_prev);
+            }
+
+            if (panel_next > 0)
+            {
+                sendBUTTONDOWN(panel_next);
+            }
+
+            panel_prev = panel_next;
+        }
+    }
+
+    /*
+    if (next > 0 && next != panel_prev)
+    {
+        if (panel_prev > 0)
+        {
+            sendBUTTONUP(panel_prev);
+        }
+
+        sendBUTTONDOWN(next);
+        panel_prev = next;
+    }
+    
+    if (next != panel_prev && panel_prev > 0)
+    {
+        sendBUTTONUP(panel_prev);
+        panel_prev = 0;
+    }
+    */
+}
+
+bool checkButton(uint8_t pin, bool &down, uint8_t id)
+{
+    bool held = digitalRead(pin) == LOW;
+
+    if (held && !down)
+    {
+        down = true;
+        sendBUTTONDOWN(id);
+        return true;
+    }
+    else if (!held && down)
+    {
+        down = false;
+        sendBUTTONUP(id);
+        return true;
+    }
 
     return false;
 }
 
 void loop() 
 {
-    delay(30); // 30ms delay is required, dont remove me!
+    read_keypad();
+    read_encoder();
+    readPanel();
 
     while (bufferSize < 16 
         && Serial.available() > 0)
@@ -236,103 +477,4 @@ void loop()
     }
 
     while (executeBuffer());
-
-    // If a button was just pressed or released...
-    if (trellis.readSwitches()) 
-    {
-        // go through every button
-        for (uint8_t i=0; i<numKeys; i++) 
-        {
-          // if it was pressed...
-          if (trellis.justPressed(i)) 
-          {
-            // Alternate the LED
-            if (trellis.isLED(i))
-              trellis.clrLED(i);
-            else
-              trellis.setLED(i);
-          } 
-        }
-        // tell the trellis to set the LEDs we requested
-        trellis.writeDisplay();
-        sendSYNCGRID();
-    }
-
-    bool held1 = digitalRead(13);
-
-    if (held1 && !down1)
-    {
-        sendBUTTONDOWN(1);
-
-        for (uint8_t i=0; i<numKeys; i++) 
-        {
-            if (trellis.isLED(i))
-              trellis.clrLED(i);
-            else
-              trellis.setLED(i);
-        }
-
-        trellis.writeDisplay();
-        sendSYNCGRID();
-        down1 = true;
-    }
-    else if (!held1 && down1)
-    {
-        down1 = false;
-        sendBUTTONUP(1);
-    }
-
-    bool held2 = digitalRead(12);
-
-    if (held2 && !down2)
-    {
-        sendBUTTONDOWN(2);
-
-        for (uint8_t i=0; i<numKeys; i++) 
-        {
-          buffer2[i] = trellis.isLED(numKeys - i - 1);
-        }
-
-        for (uint8_t i=0; i<numKeys; i++) 
-        {
-            if (buffer2[i])
-              trellis.setLED(i);
-            else
-              trellis.clrLED(i);
-        }
-
-        trellis.writeDisplay();
-        sendSYNCGRID();
-        down2 = true;
-    }
-    else if (!held2 && down2)
-    {
-        down2 = false;
-        sendBUTTONUP(2);
-    }
-
-    bool held3 = digitalRead(8);
-
-    if (held3 && !down3)
-    {
-        sendBUTTONDOWN(3);
-        down3 = true;
-    }
-    else if (!held3 && down3)
-    {
-        down3 = false;
-        sendBUTTONUP(3);
-    }
-
-    int d0 = map(analogRead(A0), 0, 1023, 0, 255);
-    int d1 = map(analogRead(A1), 0, 1023, 0, 255);
-    int d2 = map(analogRead(A2), 0, 1023, 0, 255);
-
-    if (d0 != dials[0])
-    {
-        dials[0] = d0;
-        sendDIALCHANGE(0, d0);
-
-        //sendDEBUG(String(d0));
-    }
 }

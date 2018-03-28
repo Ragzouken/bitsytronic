@@ -14,7 +14,7 @@ class SerialMessager(object):
         self.data = []
 
     def connect(self, port):
-        self.serial = serial.Serial(port, timeout=0)
+        self.serial = serial.Serial(port, 115200, timeout=0)
         self.data = []
 
     def receive(self):
@@ -67,8 +67,56 @@ def recvSYNCGRID(buffer):
 
     return True
 
+def recv_PAD_DOWN(buffer):
+    global KEYS, grids
+
+    if not buffer.has_bytes(2):
+        return False
+
+    buffer.take_byte()
+    button = buffer.take_byte()
+
+    print("pad down: %s" % button)
+
+    KEYS[256 + button] = 1
+
+    print(len(GRAPHICS))
+    grids = GRAPHICS[button]
+    send_grid([i == button for i in xrange(64)], MESSAGER.serial)
+
+    return True
+
+def recv_PAD_UP(buffer):
+    global KEYS
+
+    if not buffer.has_bytes(2):
+        return False
+
+    buffer.take_byte()
+    button = buffer.take_byte()
+
+    print("pad up: %s" % button)
+
+    KEYS[256 + button] = 0
+
+    return True
+
+def SET_PAD_TOGGLE(toggle):
+    global PAD_TOGGLE
+    PAD_TOGGLE = toggle
+
+    print("SET PAD TOGGLE TO %s" % PAD_TOGGLE)
+
+    if PAD_TOGGLE:
+        MESSAGER.serial.write(chr(6))
+        send_grid(grids[frame], MESSAGER.serial)
+    else:
+        MESSAGER.serial.write(chr(5))
+        button = GRAPHICS.index(grids)
+        send_grid([i == button for i in xrange(64)], MESSAGER.serial)
+
 def recvBUTTONDOWN(buffer):
-    global frame, grids, KEYS
+    global frame, grids, KEYS, SEL
 
     if not buffer.has_bytes(2):
         return False
@@ -80,9 +128,33 @@ def recvBUTTONDOWN(buffer):
 
     KEYS[button] = 1
 
-    if button == 3:
-        frame = 1 - frame
+    if PAD_TOGGLE:
+        if button == 1:
+            frame = 1 - frame
+        elif button == 3:
+            rotatel(grids[frame])
+        elif button == 8:
+            rotater(grids[frame])
+        elif button == 7:
+            flipv(grids[frame])
+        elif button == 10:
+            fliph(grids[frame])
+        elif button == 9:
+            shiftl(grids[frame])
+        elif button == 6:
+            shiftd(grids[frame])
+        elif button == 5:
+            shiftu(grids[frame])
+        elif button == 4:
+            shiftr(grids[frame])
+
         send_grid(grids[frame], buffer.serial)
+
+    #if button == 4:
+    #    SEL = (SEL + 1) % 3 
+    if button == 2:
+        SET_PAD_TOGGLE(not PAD_TOGGLE)
+        save()
 
     return True
 
@@ -97,9 +169,6 @@ def recvBUTTONUP(buffer):
 
     KEYS[button] = 0
 
-    if button == 3:
-        send_grid(grids[frame], buffer.serial)
-
     print("button up: %s" % button)
 
     return True
@@ -112,13 +181,70 @@ def recvDIALCHANGE(buffer):
     dial = buffer.take_byte()
     DIALS[dial] = buffer.take_byte()
 
+    #print(DIALS[dial])
+
 COMMANDS = {
     0: recvDEBUG,
     1: recvSYNCGRID,
     2: recvBUTTONDOWN,
     3: recvBUTTONUP,
     4: recvDIALCHANGE,
+    # pad toggle
+    7: recv_PAD_DOWN,
+    8: recv_PAD_UP,
 }
+
+def invert(grid):
+    grid[:] = [not value for value in grid]
+
+def rotatel(grid):
+    pass
+
+def rotater(grid):
+    pass
+
+def shiftl(grid):
+    for y in xrange(8):
+        row = grid[y*8:y*8+8]
+
+        for x in xrange(8):
+            grid[y*8+x] = row[(x + 1) % 8]
+
+def shiftr(grid):
+    for y in xrange(8):
+        row = grid[y*8:y*8+8]
+
+        for x in xrange(8):
+            grid[y*8+x] = row[(x + 7) % 8]
+
+def shiftd(grid):
+    for x in xrange(8):
+        column = grid[x::8]
+
+        for y in xrange(8):
+            grid[y*8+x] = column[(y + 7) % 8]
+
+def shiftu(grid):
+    for x in xrange(8):
+        column = grid[x::8]
+
+        for y in xrange(8):
+            grid[y*8+x] = column[(y + 1) % 8]
+
+def flipv(grid):
+    for y in xrange(4):
+        for x in xrange(8):
+            a = (y + 0) * 8 + x
+            b = (7 - y) * 8 + x
+
+            grid[a], grid[b] = grid[b], grid[a]
+
+def fliph(grid):
+    copy = grid[:]
+
+    for y in xrange(8):
+        for x in xrange(8):
+            grid[y * 8 + x] = copy[y * 8 + 7 - x]
 
 def grouper(iterable, n, fillvalue=None):
     "Collect data into fixed-length chunks or blocks"
@@ -170,11 +296,24 @@ frame = 0
 grids = [[False] * 64, [False] * 64]
 
 MESSAGER = SerialMessager()
+HUE = 0
+SEL = 0
+HSV = [0, 255, 255]
+PAD_TOGGLE = True
+
+
+def save():
+    with open('graphics.txt', 'w') as outfile:
+        json.dump(GRAPHICS, outfile)
+
+def load():
+    with open('graphics.txt', 'r') as infile:
+        return json.load(infile)
 
 def run():
-    global frame, grids
-    #SCREEN = (800, 600)
-    SCREEN = (480, 272)
+    global frame, grids, HUE, GRAPHICS
+    SCREEN = (800, 600)
+    #SCREEN = (480, 272)
     FPS = 20 # 50ms per frame
     FRAME = 0
     EXIT = False
@@ -183,20 +322,19 @@ def run():
     WHITE = (255, 255, 255)
 
     pygame.init()
+    pygame.mouse.set_visible(False)
     pygame.display.set_caption('bitsytronic')
-    screen = pygame.display.set_mode(SCREEN)
+    screen = pygame.display.set_mode(SCREEN, pygame.FULLSCREEN)
     clock = pygame.time.Clock()
 
-    def save():
-        with open('graphics.txt', 'w') as outfile:
-            json.dump([grids], outfile)
-
-    def load():
-        with open('graphics.txt', 'r') as infile:
-            return json.load(infile)
-
     try:
-        grids = load()[0]
+        GRAPHICS = load()
+        grids = GRAPHICS[0]
+
+        while len(GRAPHICS) < 64:
+            GRAPHICS.append([[False] * 64, [False] * 64])
+
+        print(len(GRAPHICS))
     except (IOError, ValueError):
         pass
 
@@ -227,19 +365,42 @@ def run():
                     save()
                     send_grid([False] * 64, MESSAGER.serial)
 
+
         MESSAGER.receive()
         MESSAGER.process()
 
-        if 3 in KEYS and KEYS[3] >= 8:
+        if 2 in DIALS and DIALS[2] != 128:
+            change = DIALS[2] - 128
+            
+            if SEL == 0:
+                HSV[SEL] = (HSV[SEL] + change * 4) % 256
+            else:
+                HSV[SEL] = min(max(0, HSV[SEL] + change * 4), 255)
+
+            print(HSV)
+            DIALS[2] = 128
+
+        r, g, b = colorsys.hsv_to_rgb(HSV[0] / 255., HSV[1] / 255., HSV[2] / 255.)
+        fore = (r * 255, g * 255, b * 255)
+        dim = (r * 128, g * 128, b * 128)
+
+        animate = (not PAD_TOGGLE) or (3 in KEYS and KEYS[3] > 8)
+
+        if animate:
             frame = (FRAME // 8) % 2
-            send_grid(grids[frame], MESSAGER.serial)
+
+            if PAD_TOGGLE:
+                send_grid(grids[frame], MESSAGER.serial)
+            
+        if animate or (3 in KEYS and KEYS[3] > 0):
+            dim = BLACK
+
+        screen.fill((96, 96, 96))
 
         for y in xrange(8):
             for x in xrange(8):
-                r, g, b = colorsys.hsv_to_rgb(DIALS[0] / 255., .75, 1)
-                fore = (r * 255, g * 255, b * 255)
-                color = fore if grids[frame][y * 8 + x] else BLACK
-                pygame.draw.rect(screen, color, (x * 32 + 8, y * 32 + 8, 32, 32))
+                color = fore if grids[frame][y * 8 + x] else (dim if grids[1 - frame][y * 8 + x] else BLACK)
+                pygame.draw.rect(screen, color, (x * 64 + 144, y * 64 + 44, 64, 64))
 
         pygame.display.flip()
 
