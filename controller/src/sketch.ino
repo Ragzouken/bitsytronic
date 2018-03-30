@@ -370,8 +370,16 @@ static int lastFrame;
 static uint8_t panel_next = 0;
 static uint8_t panel_prev = 0;
 
-int getPanelDown()
+static uint32_t panel_timer = 0;
+
+bool getPanelDown()
 {
+    uint32_t time = millis();
+
+    // let's try to debounce...
+    if (time - panel_timer < 30) return false;
+    panel_timer = time;
+
     int test = analogRead(A0);
     uint8_t result = 0;
 
