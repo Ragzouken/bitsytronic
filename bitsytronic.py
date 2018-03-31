@@ -8,6 +8,15 @@ import argparse
 import json
 import colorsys
 
+icon_flip_v = pygame.image.load("icons/flip-v.png")
+icon_flip_h = pygame.image.load("icons/flip-h.png")
+icon_shift_r = pygame.image.load("icons/shift-r.png")
+icon_shift_l = pygame.image.load("icons/shift-l.png")
+icon_shift_u = pygame.image.load("icons/shift-u.png")
+icon_shift_d = pygame.image.load("icons/shift-d.png")
+icon_turn_r = pygame.image.load("icons/rotate-r.png")
+icon_turn_l = pygame.image.load("icons/rotate-l.png")
+
 class SerialMessager(object):
     def __init__(self):
         self.serial = None
@@ -198,10 +207,18 @@ def invert(grid):
     grid[:] = [not value for value in grid]
 
 def rotatel(grid):
-    pass
+    copy = grid[:]
+
+    for y in xrange(8):
+        for x in xrange(8):
+            a = y * 8 + x
+            b = (7 - x) * 8 + y
+            grid[a] = copy[b]
 
 def rotater(grid):
-    pass
+    rotatel(grid)
+    rotatel(grid)
+    rotatel(grid)
 
 def shiftl(grid):
     for y in xrange(8):
@@ -384,7 +401,7 @@ def run():
         fore = (r * 255, g * 255, b * 255)
         dim = (r * 128, g * 128, b * 128)
 
-        animate = (not PAD_TOGGLE) or (3 in KEYS and KEYS[3] > 8)
+        animate = (not PAD_TOGGLE) or (1 in KEYS and KEYS[1] > 8)
 
         if animate:
             frame = (FRAME // 8) % 2
@@ -392,15 +409,37 @@ def run():
             if PAD_TOGGLE:
                 send_grid(grids[frame], MESSAGER.serial)
             
-        if animate or (3 in KEYS and KEYS[3] > 0):
+        if animate or (1 in KEYS and KEYS[1] > 0):
             dim = BLACK
 
+        colors = ((255, 218,   9), 
+                  (255,  66,  41), 
+                  (  0, 209,  42), 
+                  ( 46, 105, 255), 
+                  (192, 192, 192))
+        icons = (icon_flip_h, icon_flip_v, 
+                 icon_shift_l, icon_turn_l,
+                 icon_shift_d, icon_shift_u,
+                 icon_shift_r, icon_turn_r)
+
+        yoff = 104
+        ygap = 72
         screen.fill((96, 96, 96))
+        
+        for i, color in enumerate(colors):
+            y = i * ygap + yoff
+            pygame.draw.circle(screen, color, (32+16, 16+y), 24)
+            pygame.draw.rect(screen, color, (56+32-4, -4+y, 40, 40))
+            
+            if i * 2 + 0 < len(icons):
+                screen.blit(icons[i * 2 + 0], (32, y))
+            if i * 2 + 1 < len(icons):
+                screen.blit(icons[i * 2 + 1], (32 + 56, y))
 
         for y in xrange(8):
             for x in xrange(8):
                 color = fore if grids[frame][y * 8 + x] else (dim if grids[1 - frame][y * 8 + x] else BLACK)
-                pygame.draw.rect(screen, color, (x * 64 + 144, y * 64 + 44, 64, 64))
+                pygame.draw.rect(screen, color, (x * 64 + 244, y * 64 + 44, 64, 64))
 
         pygame.display.flip()
 
